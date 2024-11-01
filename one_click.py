@@ -8,6 +8,7 @@ import signal
 import site
 import subprocess
 import sys
+from importlib import util as implib_util
 
 # Remove the '# ' from the following lines as needed for your AMD GPU on Linux
 # os.environ["ROCM_PATH"] = '/opt/rocm'
@@ -56,6 +57,23 @@ def is_macos():
 
 def is_x86_64():
     return platform.machine() == "x86_64"
+
+def is_npu_available(check_device=False):
+    "Checks if `torch_npu` is installed and potentially if a NPU is in the environment"
+    if implib_util.find_spec("torch") is None or implib_util.find_spec("torch_npu") is None:
+        return False
+
+    import torch
+    import torch_npu  # noqa: F401
+
+    if check_device:
+        try:
+            # Will raise a RuntimeError if no NPU is found
+            _ = torch.npu.device_count()
+            return torch.npu.is_available()
+        except RuntimeError:
+            return False
+    return hasattr(torch, "npu") and torch.npu.is_available()
 
 
 def cpu_has_avx2():
@@ -245,6 +263,7 @@ def install_webui():
                 'B': 'AMD (Linux/MacOS only. Requires ROCm SDK 6.1 on Linux)',
                 'C': 'Apple M Series',
                 'D': 'Intel Arc (IPEX)',
+                'E': 'Ascend',
                 'N': 'None (I want to run models in CPU mode)'
             },
         )
@@ -254,6 +273,7 @@ def install_webui():
         "B": "AMD",
         "C": "APPLE",
         "D": "INTEL",
+        "E": "Ascend",
         "N": "NONE"
     }
 
@@ -305,6 +325,12 @@ def install_webui():
             install_pytorch = "python -m pip install torch==2.1.0a0 torchvision==0.16.0a0 torchaudio==2.1.0a0 intel-extension-for-pytorch==2.1.10+xpu --extra-index-url https://pytorch-extension.intel.com/release-whl/stable/xpu/us/"
         else:
             install_pytorch = "python -m pip install torch==2.1.0a0 torchvision==0.16.0a0 torchaudio==2.1.0a0 intel-extension-for-pytorch==2.1.10 --extra-index-url https://pytorch-extension.intel.com/release-whl/stable/xpu/us/"
+    elif selected_gpu == "Ascend":
+        if is_linux():
+            install_pytorch = "python -m pip install torch==2.1.0 torchvision==0.16.0 torchaudio==2.1.0 --index-url https://download.pytorch.org/whl/cpu && python -m pip install torch_npu==2.1.0"
+        else:
+            print("Ascend NPUs are only supported on Linux. Exiting...")
+            sys.exit(1)
 
     # Install Git and then Pytorch
     print_big_message("Installing PyTorch.")
@@ -380,6 +406,8 @@ def update_requirements(initial_installation=False, pull=True):
         base_requirements = "requirements_cpu_only" + ("_noavx2" if not cpu_has_avx2() else "") + ".txt"
     elif is_macos():
         base_requirements = "requirements_apple_" + ("intel" if is_x86_64() else "silicon") + ".txt"
+    elif is_npu_available():
+        base_requirements = "requirements_npu" + ("_noavx2" if not cpu_has_avx2() else "") + ".txt"
     else:
         base_requirements = "requirements" + ("_noavx2" if not cpu_has_avx2() else "") + ".txt"
 
